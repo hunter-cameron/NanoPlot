@@ -120,6 +120,12 @@ def get_args():
         "--minlength", help="Hide reads shorter than length specified.", type=int, metavar="N"
     )
     filtering.add_argument(
+        "--ultralong",
+        help="Report stats for ultralong reads (reads with length >= N).",
+        type=int,
+        metavar="N",
+    )
+    filtering.add_argument(
         "--drop_outliers", help="Drop outlier reads with extreme long length.", action="store_true"
     )
     filtering.add_argument(

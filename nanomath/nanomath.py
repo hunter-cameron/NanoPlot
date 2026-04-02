@@ -25,7 +25,7 @@ from math import log
 
 
 class Stats(object):
-    def __init__(self, df):
+    def __init__(self, df, ultralong=None):
         if len(df) < 5:
             sys.stderr.write("\n\nWARNING: less than 5 reads in the dataset!\n")
             sys.stderr.write("WARNING: some stats might be unexpected or missing\n")
@@ -45,6 +45,12 @@ class Stats(object):
         self.mean_read_length = np.mean(df["lengths"])
         self.read_length_stdev = np.std(df["lengths"])
         self.n50 = get_N50(np.sort(df["lengths"]))
+        if ultralong is not None:
+            self._ultralong_threshold = ultralong
+            ultralong_mask = df["lengths"] >= ultralong
+            self.number_of_ultralong_reads = int(np.sum(ultralong_mask))
+            ultralong_bases = int(np.sum(df.loc[ultralong_mask, "lengths"]))
+            self._ultralong_stats = (self.number_of_ultralong_reads, ultralong_bases)
         if "percentIdentity" in df:
             self.average_identity = np.mean(df["percentIdentity"])
             self.median_identity = np.median(df["percentIdentity"])
@@ -74,11 +80,19 @@ class Stats(object):
 
     def long_features_as_string(self):
         """formatting long features to a string to print for legacy stats output"""
-        self.top5_lengths = self.long_feature_as_string_top5(self._top5_lengths)
-        self.top5_quals = self.long_feature_as_string_top5(self._top5_quals)
-        self.reads_above_qual = self.long_feature_as_string_above_qual(
-            self._reads_above_qual
-        )
+        if hasattr(self, "_top5_lengths"):
+            self.top5_lengths = self.long_feature_as_string_top5(self._top5_lengths)
+        if hasattr(self, "_top5_quals"):
+            self.top5_quals = self.long_feature_as_string_top5(self._top5_quals)
+        if hasattr(self, "_reads_above_qual"):
+            self.reads_above_qual = self.long_feature_as_string_above_qual(
+                self._reads_above_qual
+            )
+        if hasattr(self, "_ultralong_stats"):
+            self.ultralong_reads = self.format_ultralong_line(self._ultralong_stats)
+            self.ultralong_bases = self.format_ultralong_bases_line(
+                self._ultralong_stats
+            )
 
     def long_feature_as_string_top5(self, field):
         """for legacy stats output"""
@@ -111,6 +125,22 @@ class Stats(object):
             round(megAboveQ, ndigits=1),
         )
 
+    def format_ultralong_line(self, entry):
+        """for legacy stats output"""
+        numberUltralong, ultralongBases = entry
+        return "{} ({}%)".format(
+            numberUltralong,
+            round(100 * (numberUltralong / self.number_of_reads), ndigits=1),
+        )
+
+    def format_ultralong_bases_line(self, entry):
+        """for legacy stats output"""
+        numberUltralong, ultralongBases = entry
+        return "{}Mb ({}%)".format(
+            round(ultralongBases / 1e6, ndigits=1),
+            round(100 * (ultralongBases / self.number_of_bases), ndigits=1),
+        )
+
     def to_dict(self):
         """for tsv stats output"""
         statdict = self.__dict__
@@ -125,6 +155,7 @@ class Stats(object):
             feature="_top5_quals", name="highest_Q_read_(with_length)"
         )
         self.unwind_long_features_above_qual(feature="_reads_above_qual", name="Reads")
+        self.unwind_ultralong_reads(feature="_ultralong_stats", name="Ultralong")
         return {k: v for k, v in statdict.items() if not k.startswith("_")}
 
     def unwind_long_features_top5(self, feature, name):
@@ -141,13 +172,27 @@ class Stats(object):
         if feature not in self.__dict__:
             return
         for entry, label in zip(
-            self.__dict__[feature], [">Q{}:".format(q) for q in self._qualgroups]
+            self.__dict__[feature], [">"+"Q{}:".format(q) for q in self._qualgroups]
         ):
             numberAboveQ, megAboveQ = entry
             percentage = 100 * (numberAboveQ / float(self.number_of_reads))
             self.__dict__[name + " " + label] = "{} ({}%) {}Mb".format(
                 numberAboveQ, round(percentage, ndigits=1), round(megAboveQ, ndigits=1)
             )
+
+    def unwind_ultralong_reads(self, feature, name):
+        """for tsv stats output"""
+        if feature not in self.__dict__:
+            return
+        numberUltralong, ultralongBases = self.__dict__[feature]
+        read_percentage = 100 * (numberUltralong / float(self.number_of_reads))
+        base_percentage = 100 * (ultralongBases / float(self.number_of_bases))
+        self.__dict__[name + " Number:"] = "{} ({}%)".format(
+            numberUltralong, round(read_percentage, ndigits=1)
+        )
+        self.__dict__[name + " Bases:"] = "{}Mb ({}%)".format(
+            round(ultralongBases / 1e6, ndigits=1), round(base_percentage, ndigits=1)
+        )
 
 
 def get_N50(readlengths):
@@ -217,7 +262,7 @@ def reads_above_qual(df, qual):
     return numberAboveQ, megAboveQ
 
 
-def write_stats(datadfs, outputfile, names=[], as_tsv=False):
+def write_stats(datadfs, outputfile, names=[], as_tsv=False, ultralong=None):
     """Call calculation functions and write stats file.
 
     This function takes a list of DataFrames,
@@ -228,7 +273,7 @@ def write_stats(datadfs, outputfile, names=[], as_tsv=False):
     else:
         output = open(outputfile, "wt")
 
-    stats = [Stats(df) for df in datadfs]
+    stats = [Stats(df, ultralong=ultralong) for df in datadfs]
 
     if as_tsv:
         import pandas as pd
@@ -242,10 +287,10 @@ def write_stats(datadfs, outputfile, names=[], as_tsv=False):
         output.write(df.to_csv(sep="\t"))
         return df
     else:
-        write_stats_legacy(stats, names, output, datadfs)
+        write_stats_legacy(stats, names, output, datadfs, ultralong=ultralong)
 
 
-def write_stats_legacy(stats, names, output, datadfs):
+def write_stats_legacy(stats, names, output, datadfs, ultralong=None):
     """
     Legacy method to write out stats.
     Will add padding to pretty print the table, and contain section headers
@@ -322,6 +367,19 @@ def write_stats_legacy(stats, names, output, datadfs):
                         ),
                     )
                 )
+    elif ultralong is not None:
+        for s in stats:
+            s.long_features_as_string()
+    
+    if ultralong is not None and any([hasattr(s, "ultralong_reads") for s in stats]):
+        output.write("Number and percentage of ultralong reads (>={}) \n".format(ultralong))
+
+        output.write("Ultralong reads:\t{}\n".format(
+            "\t".join([s.ultralong_reads if hasattr(s, "ultralong_reads") else "NA" for s in stats])
+        ))
+        output.write("Ultralong bases:\t{}\n".format(
+            "\t".join([s.ultralong_bases if hasattr(s, "ultralong_bases") else "NA" for s in stats])
+        ))
 
 
 def feature_list(stats, feature, index=None, padding=15):

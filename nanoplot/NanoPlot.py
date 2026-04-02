@@ -128,7 +128,12 @@ def main():
 def make_stats(datadf, settings, suffix, tsv_stats=True):
     import nanomath
     statsfile = settings["path"] + "NanoStats" + suffix + ".txt"
-    stats_df = nanomath.write_stats(datadfs=[datadf], outputfile=statsfile, as_tsv=tsv_stats)
+    stats_df = nanomath.write_stats(
+        datadfs=[datadf],
+        outputfile=statsfile,
+        as_tsv=tsv_stats,
+        ultralong=settings.get("ultralong"),
+    )
     logging.info("Calculated statistics")
     if settings["barcoded"]:
         barcodes = list(datadf["barcode"].unique())
@@ -138,6 +143,7 @@ def make_stats(datadf, settings, suffix, tsv_stats=True):
             outputfile=statsfile,
             names=barcodes,
             as_tsv=tsv_stats,
+            ultralong=settings.get("ultralong"),
         )
     return stats_df if tsv_stats else statsfile
 
